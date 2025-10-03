@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Weather Dashboard with Map</title>
+<!-- Leaflet CSS -->
+<link rel="styleshee<t" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<style>
+:root {
+  --bg-light: #f0f2f5;
+  --text-light: #000;
+  --bg-dark: #121212;
+  --text-dark: #f5f5f5;
+}
+body { font-family: Arial,sans-serif; text-align:center; padding:20px; margin:0; transition:0.5s; overflow-x:hidden; }
+body.light { background: var(--bg-light); color: var(--text-light); }
+body.dark { background: var(--bg-dark); color: var(--text-dark); }
+
+.container { max-width:600px; margin:auto; padding:20px; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,0.1); background: rgba(255,255,255,0.15); backdrop-filter:blur(6px); }
+input,button { padding:8px;margin:5px;border-radius:8px; }
+input { width:60%; border:1px solid #ccc; }
+button { border:none;background:#4caf50;color:white; cursor:pointer; }
+button:hover { background:#45a049; }
+
+.weather-icon { width:80px; }
+.forecast-day { display:inline-block;width:120px;margin:10px;background: rgba(249,249,249,0.2); padding:10px; border-radius:8px; cursor:pointer; position:relative; overflow:hidden; }
+.forecast-day:hover { background: rgba(0,0,0,0.1); }
+.forecast-anim { position:absolute; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none; }
+.forecast-day * { position:relative; z-index:1; }
+
+.alert { margin:15px auto; padding:10px; border-radius:6px; font-weight:bold; display:none; }
+
+#map { height:300px; margin-top:20px; border-radius:10px; }
+
+body.sunny { background: linear-gradient(to bottom,#f9d423,#ff4e50); }
+body.rainy { background: linear-gradient(to bottom,#4e54c8,#8f94fb); }
+body.snowy { background: linear-gradient(to bottom,#e0eafc,#cfdef3); }
+body.storm { background: linear-gradient(to bottom,#232526,#414345); }
+body.hot { background: linear-gradient(to bottom,#ff512f,#dd2476); }
+body.cold { background: linear-gradient(to bottom,#2193b0,#6dd5ed); }
+
+.animation-layer { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; overflow:hidden; z-index:-1; }
+.raindrop { position:absolute; width:2px;height:15px;background:#00f; animation:rain 0.7s linear infinite; opacity:0.6; }
+@keyframes rain {0%{transform:translateY(-20px);} 100%{transform:translateY(100vh);} }
+.snowflake { position:absolute; font-size:1.2em; color:#fff; animation:snow 5s linear infinite; opacity:0.8; }
+@keyframes snow {0%{transform:translateY(-10px);} 100%{transform:translateY(100vh);} }
+.cloud { position:absolute; background:#fff; border-radius:50%; opacity:0.8; animation:cloud 40s linear infinite; }
+@keyframes cloud { from{left:-200px;} to{left:100%;} }
+.lightning { position:absolute; width:100%; height:100%; background:white; opacity:0; animation:lightning 4s infinite; }
+@keyframes lightning {0%,95%,100%{opacity:0;} 96%,98%{opacity:0.8;} 97%{opacity:0.3;}}
+.sun-rays { position:absolute; top:-50px; left:50%; width:200px; height:200px; margin-left:-100px; background: radial-gradient(circle,rgba(255,255,0,0.7)20%,transparent 70%); border-radius:50%; animation:spin 20s linear infinite;}
+@keyframes spin{from{transform:rotate(0deg);} to{transform:rotate(360deg);}}
+.ice{position:absolute;font-size:0.8em;color:#cce7ff;animation:snow 6s linear infinite;opacity:0.7;}
+</style>
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
+<body class="light">
+<div class="container">
+  <h1>🌤️ Weather Dashboard</h1>
+  <button onclick="toggleDarkMode()">🌙 Toggle Dark/Light</button>
+  <div>
+    <input type="text" id="cityInput" placeholder="Enter city">
+    <button onclick="searchCity()">Search</button>
+  </div>
+  <div>
+    <input type="text" id="aiInput" placeholder="Ask: 'weather in London tomorrow'">
+    <button onclick="aiSearch()">AI Search</button>
+  </div>
+  <div id="alert" class="alert"></div>
+  <div id="weather"></div>
+  <div id="forecast"></div>
+  <div id="map"></div>
+</div>
+<div class="animation-layer" id="animationLayer"></div>
+
+<script>
+const apiKey="YOUR_OPENWEATHERMAP_API_KEY";
+const weatherDiv=document.getElementById("weather");
+const forecastDiv=document.getElementById("forecast");
+const alertDiv=document.getElementById("alert");
+const animLayer=document.getElementById("animationLayer");
+
+// Theme
+if(localStorage.getItem("theme")==="dark"){document.body.classList.replace("light","dark");}
+function toggleDarkMode(){document.body.classList.toggle("dark");document.body.classList.toggle("light");localStorage.setItem("theme",document.body.classList.contains("dark")?"dark":"light");}
+
+// Map
+let map,marker;
+function initMap(lat=28.6139,lon=77.2090){
+  if(!map){
+    map=L.map('map').setView([lat,lon],10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'&copy; OpenStreetMap'}).addTo(map);
+    marker=L.marker([lat,lon]).addTo(map);
+  }else{
+    map.setView([lat,lon],10);
+    marker.setLatLng([lat,lon]);
+  }
+}
+
+// Geolocation
+if("geolocation"in navigator){navigator.geolocation.getCurrentPosition(success,error);}
+function success(pos){getWeatherByCoords(pos.coords.latitude,pos.coords.longitude);getForecast(pos.coords.latitude,pos.coords.longitude);}
+function error(){weatherDiv.innerHTML="<p>Unable to retrieve location.</p>";}
+
+// Search
+function searchCity(){let c=document.getElementById("cityInput").value;if(c){getWeatherByCity(c);getForecastByCity(c);}}
+function aiSearch(){let q=document.getElementById("aiInput").value.toLowerCase();let c=q.match(/in ([a-zA-Z\s]+)/);c=c?c[1].trim():"Delhi";getWeatherByCity(c);getForecastByCity(c);}
+
+// Weather
+async function getWeatherByCoords(lat,lon){fetchWeather(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`);}
+async function getWeatherByCity(city){fetchWeather(`https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${apiKey}&units=metric`);}
+async function fetchWeather(url){
+  try{
+    const r=await fetch(url);const d=await r.json();
+    const city=d.name;const temp=Math.round(d.main.temp);const cond=d.weather[0].main;const icon=`https://openweathermap.org/img/wn/${d.weather[0].icon}@2x.png`;
+    weatherDiv.innerHTML=`<h2>${city}</h2><img class="weather-icon" src="${icon}" alt="${cond}"><p><strong>${temp}°C</strong></p><p>${cond}</p>`;
+    showAlert(cond,temp);
+    setWeatherMode(cond,temp,animLayer);
+    initMap(d.coord.lat,d.coord.lon);
+  }catch{weatherDiv.innerHTML="<p>Failed to load data</p>";}
+}
+
+// Forecast
+async function getForecast(lat,lon){fetchForecast(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric`);}
+async function getForecastByCity(city){fetchForecast(`https://api.openweathermap.org/data/2.5/forecast?q=${city}&appid=${apiKey}&units=metric`);}
+async function fetchForecast(url){
+  try{
+    const r=await fetch(url);const d=await r.json();
+    const daily=d.list.filter(i=>i.dt_txt.includes("12:00:00"));
+    forecastDiv.innerHTML=buildForecast(daily);
+    document.querySelectorAll(".forecast-day").forEach((card,i)=>{
+      card.addEventListener("click",()=>{
+        const temp=+card.dataset.temp,cond=card.dataset.cond;
+        setWeatherMode(cond,temp,animLayer);
+        showAlert(cond,temp);
+      });
+    });
+  }catch{forecastDiv.innerHTML="<p>Failed to load forecast</p>";}
+}
+function buildForecast(days){
+  return days.map(day=>{
+    const date=new Date(day.dt_txt).toLocaleDateString("en-US",{weekday:"short"});
+    const temp=Math.round(day.main.temp);
+    const icon=`https://openweathermap.org/img/wn/${day.weather[0].icon}@2x.png`;
+    const cond=day.weather[0].main;
+    return `<div class="forecast-day" data-temp="${temp}" data-cond="${cond}"><div class="forecast-anim"></div><h4>${date}</h4><img src="${icon}" alt="${cond}"><p>${temp}°C</p><p>${cond}</p></div>`;
+  }).join("");
+}
+
+// Alerts
+function showAlert(condition,temp){
+  alertDiv.style.display="block"; alertDiv.className="alert alert-warning";
+  if(condition.toLowerCase().includes("heavy rain")){alertDiv.innerText="🌧️⚠️ Heavy rain expected! Possible flooding, avoid travel.";}
+  else if(condition.includes("Rain")){alertDiv.innerText="🌧️ Rain expected! Carry an umbrella.";}
+  else if(condition.includes("Snow")){alertDiv.innerText="❄️ Snowfall coming! Dress warmly.";}
+  else if(condition.includes("Storm")){alertDiv.innerText="⛈️ Storm warning! Stay safe indoors.";}
+  else if(temp>35){alertDiv.innerText="🔥 Heatwave! Stay hydrated.";}
+  else if(temp<5){alertDiv.innerText="🥶 Cold weather! Bundle up.";}
+  else{alertDiv.style.display="none";}
+}
+
+// Weather animations
+function setWeatherMode(cond,temp,layer){
+  document.body.className=(localStorage.getItem("theme")||"light");
+  layer.innerHTML="";
+  if(cond.includes("Rain")){document.body.classList.add("rainy");for(let i=0;i<40;i++){let e=document.createElement("div");e.className="raindrop";e.style.left=Math.random()*100+"vw";e.style.animationDuration=(0.4+Math.random())+"s";layer.appendChild(e);}}
+  else if(cond.includes("Snow")){document.body.classList.add("snowy");for(let i=0;i<25;i++){let e=document.createElement("div");e.className="snowflake";e.innerText="❄";e.style.left=Math.random()*100+"vw";e.style.animationDuration=(3+Math.random()*3)+"s";layer.appendChild(e);}}
+  else if(cond.includes("Cloud")){for(let i=0;i<4;i++){let e=document.createElement("div");e.className="cloud";e.style.width=(100+Math.random()*150)+"px";e.style.height=(60+Math.random()*50)+"px";e.style.top=Math.random()*50+"vh";e.style.animationDuration=(30+Math.random()*20)+"s";layer.appendChild(e);}}
+  else if(cond.includes("Storm")){document.body.classList.add("storm");let e=document.createElement("div");e.className="lightning";layer.appendChild(e);}
+  else if(temp>35){document.body.classList.add("hot");let e=document.createElement("div");e.className="sun-rays";layer.appendChild(e);}
+  else if(temp<5){document.body.classList.add("cold");for(let i=0;i<15;i++){let e=document.createElement("div");e.className="ice";e.innerText="✦";e.style.left=Math.random()*100+"vw";e.style.animationDuration=(4+Math.random()*2)+"s";layer.appendChild(e);}}
+  else{document.body.classList.add("sunny");let e=document.createElement("div");e.className="sun-rays";layer.appendChild(e);}
+}
+</script>
+</body>
+</html>
